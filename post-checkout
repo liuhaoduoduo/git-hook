@@ -1,0 +1,74 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Git post-checkout 钩子脚本
+功能：在切换分支后自动执行 git pull 拉取更新
+"""
+
+import subprocess
+import sys
+
+
+def run_git_pull():
+    """在分支切换后执行 git pull --no-rebase 命令"""
+    try:
+        # 获取当前分支名称
+        branch_result = subprocess.run(
+            ['git', 'rev-parse', '--abbrev-ref', 'HEAD'],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        
+        # 检查获取分支名称是否成功
+        if branch_result.returncode != 0:
+            print("❌ 获取当前分支名称失败")
+            return False
+        
+        # 提取并输出当前分支名称
+        current_branch = branch_result.stdout.strip()
+        print(f"📦 当前分支: {current_branch}")
+        
+        # 检查远程追踪分支是否存在
+        remote_check = subprocess.run(
+            ['git', 'rev-parse', '--verify', f'origin/{current_branch}'],
+            capture_output=True,
+            timeout=5
+        )
+        
+        # 如果远程分支不存在，跳过 pull 操作
+        if remote_check.returncode != 0:
+            print(f"⚠️  分支 '{current_branch}' 没有对应的远程追踪分支，跳过拉取")
+            return True
+        
+        # 执行 git pull --no-rebase 命令（不使用 rebase 方式）
+        print(f"⬇️  从 origin/{current_branch} 拉取更新...")
+        pull_result = subprocess.run(
+            ['git', 'pull', '--no-rebase'],
+            timeout=30
+        )
+        
+        # 根据 git pull 的返回状态处理
+        if pull_result.returncode == 0:
+            print("✅ 拉取成功")
+            return True
+        elif pull_result.returncode == 1:
+            print("⚠️  拉取完成但存在冲突，请手动解决冲突")
+            return True  # 不阻止切换分支，让用户手动处理冲突
+        else:
+            print(f"❌ 拉取失败，退出码: {pull_result.returncode}")
+            return False
+            
+    except subprocess.TimeoutExpired:
+        print("❌ Git 拉取超时")
+        return False
+    except Exception as e:
+        print(f"❌ 拉取过程中出错: {e}")
+        return False
+
+if __name__ == '__main__':
+    # 执行拉取操作
+    success = run_git_pull()
+    
+    # 不管是否失败都不阻止分支切换
+    sys.exit(0)

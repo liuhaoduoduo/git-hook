@@ -1,0 +1,50 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Git pre-rebase 钩子脚本（Python 3 版本）
+
+功能：在执行 rebase 前自动执行编译操作
+
+使用：
+  作为 .git/hooks/pre-rebase 钩子自动调用
+
+注意：编译失败会阻止 rebase 操作
+"""
+
+import subprocess
+import sys
+from pathlib import Path
+
+def get_git_dir() -> str:
+    try:
+        result = subprocess.run([
+            "git", "rev-parse", "--git-dir"
+        ], capture_output=True, text=True, check=True)
+        return result.stdout.strip()
+    except subprocess.CalledProcessError as e:
+        print(f"Error: Failed to get git directory: {e}", file=sys.stderr)
+        return ""
+
+def main() -> int:
+    git_dir = get_git_dir()
+    if not git_dir:
+        print("Error: Could not determine git directory", file=sys.stderr)
+        return 1
+    build_script = Path(git_dir) / "hooks" / "build-on-hook.py"
+    if not build_script.exists():
+        print(f"Warning: Build script not found at {build_script}", file=sys.stderr)
+        return 0
+    try:
+        result = subprocess.run([
+            "python3", str(build_script), "pre-rebase"
+        ], check=True)
+        return result.returncode
+    except subprocess.CalledProcessError as e:
+        print(f"Error: Build failed, aborting rebase. (exit code: {e.returncode})", file=sys.stderr)
+        return e.returncode
+    except Exception as e:
+        print(f"Error: Failed to execute build script: {e}", file=sys.stderr)
+        return 1
+
+if __name__ == "__main__":
+    sys.exit(main())
