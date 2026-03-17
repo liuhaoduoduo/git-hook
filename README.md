@@ -56,10 +56,10 @@
 
 ### 修改编译命令
 
-编辑 `.git/hooks/.build-config` 文件：
+编辑 `.git/hooks/build-config` 文件：
 
 ```bash
-code .git/hooks/.build-config
+code .git/hooks/build-config
 ```
 
 **配置示例：**
@@ -91,7 +91,7 @@ git pull origin main
   ↓
 [2] post-merge hook (Python 3)（合并成功时触发）
     └─ 调用: python3 build-on-hook.py "post-merge"
-           ├─ 读取: .build-config
+           ├─ 读取: build-config
            └─ 顺序执行: 每条编译命令
 ```
 
@@ -107,14 +107,14 @@ git pull origin main
    ```
    应看到 `rwxr-xr-x` 权限
 
-2. `.build-config` 是否存在且有非注释命令：
+2. `build-config` 是否存在且有非注释命令：
    ```bash
-   cat .git/hooks/.build-config | grep -v "^#" | grep -v "^$"
+   cat .git/hooks/build-config | grep -v "^#" | grep -v "^$"
    ```
 
-3. Hook 名称是否在 `.build-hooks-enabled` 中：
+3. Hook 名称是否在 `build-hooks-enabled` 中：
    ```bash
-   cat .git/hooks/.build-hooks-enabled
+   cat .git/hooks/build-hooks-enabled
    ```
 
 ### Q2: 编译命令执行失败？

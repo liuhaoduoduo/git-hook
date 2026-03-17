@@ -4,7 +4,7 @@
 公共编译脚本：Git 钩子自动编译（Python 3 版本）
 
 功能：
-  - 读取编译命令配置文件（.build-config）
+  - 读取编译命令配置文件（build-config）
   - 按顺序执行编译命令
   - 任何命令失败时停止并报错
 
@@ -13,7 +13,7 @@
   例如：python3 build-on-hook.py post-checkout
 
 配置文件：
-  .build-config - 存储编译命令列表（每行一条）
+  build-config - 存储编译命令列表（每行一条）
 """
 
 import sys
@@ -42,7 +42,7 @@ def log_error(msg):
 def main():
     # 获取脚本所在目录（即 .git/hooks 目录）
     hooks_dir = Path(__file__).resolve().parent
-    config_file = hooks_dir / '.build-config'
+    config_file = hooks_dir / 'build-config'
     # 获取 hook 名称
     hook_name = sys.argv[1] if len(sys.argv) > 1 else 'unknown'
 

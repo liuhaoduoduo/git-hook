@@ -12,7 +12,7 @@ Git post-merge 钩子脚本（Python 3 版本）
 
 
 配置：
-    编译命令列表在 .git/hooks/.build-config 文件中维护
+    编译命令列表在 .git/hooks/build-config 文件中维护
 
 注意：此脚本不会阻止 merge 操作，即使编译失败也会完成合并
 """
