@@ -39,6 +39,7 @@
 ├── post-checkout             # ✅ 分支切换后：自动 git pull + 编译
 ├── post-merge                # ✅ 分支合并后：自动编译
 ├── pre-commit                # ✅ Commit 前：必须通过编译才能提交
+├── post-commit               # ✅ Commit 后：询问是否推送到远程
 └── pre-rebase                # ✅ Rebase 前：必须通过编译才能 rebase
 ```
 
@@ -49,7 +50,7 @@
 | `git checkout <branch>` | post-checkout | 自动拉取 + 编译 |
 | `git pull origin <branch>` | post-checkout + post-merge | 切换分支时拉取，合并成功时编译 |
 | `git merge <branch>` | post-merge | 合并成功后编译 |
-| `git commit` | pre-commit | **编译失败则阻止 commit** |
+| `git commit` | pre-commit + post-commit | **编译失败则阻止 commit**；成功后询问是否推送 |
 | `git rebase` | pre-rebase | **编译失败则阻止 rebase** |
 
 ## 配置管理
@@ -157,4 +158,4 @@ git commit --no-verify -m "your message"
 
 **更新日期：** 2026-03-17  
 **脚本语言：** Python 3  
-**已验证的 Hooks：** post-checkout、post-merge、pre-commit、pre-rebase
+**已验证的 Hooks：** post-checkout、post-commit、post-merge、pre-commit、pre-rebase
