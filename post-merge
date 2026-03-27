@@ -4,6 +4,8 @@
 Git post-merge 钩子脚本（Python 3 版本）
 
 功能：在分支合并（包括 git pull 中的合并步骤）后自动执行编译操作
+      仅在手动 merge 且编译全部成功后询问是否执行 git push
+      （切换分支自动 pull 触发的 merge 不询问）
 
 触发场景：
   - git merge <branch>
@@ -21,6 +23,13 @@ import subprocess
 import sys
 from pathlib import Path
 
+# 颜色定义
+GREEN = '\033[0;32m'
+YELLOW = '\033[1;33m'
+RED = '\033[0;31m'
+BLUE = '\033[0;34m'
+NC = '\033[0m'
+
 
 def get_git_dir() -> str:
     """获取 Git 目录路径"""
@@ -37,8 +46,30 @@ def get_git_dir() -> str:
         return ""
 
 
+def prompt_push() -> None:
+    """编译成功后询问用户是否执行 git push"""
+    try:
+        # Git hook 中 stdin 被重定向，需要通过 /dev/tty 读取用户输入
+        with open('/dev/tty', 'r') as tty:
+            print(f"\n{GREEN}✅ 编译全部成功！{NC}")
+            print(f"{YELLOW}是否执行 git push？[y/N]: {NC}", end='', flush=True)
+            answer = tty.readline().strip().lower()
+        if answer in ('y', 'yes'):
+            print(f"{BLUE}ℹ️  正在执行 git push ...{NC}")
+            result = subprocess.run(["git", "push"], capture_output=False)
+            if result.returncode == 0:
+                print(f"{GREEN}✅ Push 成功！{NC}")
+            else:
+                print(f"{RED}❌ Push 失败 (退出码: {result.returncode}){NC}")
+        else:
+            print(f"{BLUE}ℹ️  已跳过 push。{NC}")
+    except (OSError, IOError):
+        # 非交互环境（如 CI）无法打开 /dev/tty，静默跳过
+        pass
+
+
 def main() -> int:
-    """主函数：调用公共编译脚本"""
+    """主函数：调用公共编译脚本，编译成功后询问是否 push"""
     git_dir = get_git_dir()
     if not git_dir:
         print("Error: Could not determine git directory", file=sys.stderr)
@@ -51,10 +82,18 @@ def main() -> int:
         return 0
     
     try:
-        subprocess.run(
+        result = subprocess.run(
             ["python3", str(build_script), "post-merge"],
             check=False
         )
+        if result.returncode == 0:
+            # 检查是否为自动 pull 触发的 merge（标记文件由 post-checkout 创建）
+            marker = Path(git_dir) / "AUTO_PULL_IN_PROGRESS"
+            if marker.exists():
+                marker.unlink(missing_ok=True)
+                # 自动 pull 触发的 merge，不询问 push
+            else:
+                prompt_push()
     except Exception as e:
         print(f"Error: Failed to execute build script: {e}", file=sys.stderr)
         return 0  # 不阻止 merge 操作

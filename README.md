@@ -37,7 +37,7 @@
 ├── build-on-hook.py          # ✅ 公共编译脚本（Python 3，核心逻辑）
 ├── build-config              # ✅ 编译命令配置（可随时修改）
 ├── post-checkout             # ✅ 分支切换后：自动 git pull + 编译
-├── post-merge                # ✅ 分支合并后：自动编译
+├── post-merge                # ✅ 分支合并后：自动编译，手动 merge 成功后询问是否推送
 ├── pre-commit                # ✅ Commit 前：必须通过编译才能提交
 ├── post-commit               # ✅ Commit 后：询问是否推送到远程
 └── pre-rebase                # ✅ Rebase 前：必须通过编译才能 rebase
@@ -48,8 +48,8 @@
 | Git 操作 | 触发的 Hooks | 特点 |
 |---------|------------|------|
 | `git checkout <branch>` | post-checkout | 自动拉取 + 编译 |
-| `git pull origin <branch>` | post-checkout + post-merge | 切换分支时拉取，合并成功时编译 |
-| `git merge <branch>` | post-merge | 合并成功后编译 |
+| `git pull origin <branch>` | post-checkout + post-merge | 切换分支时拉取，合并成功时编译（不询问 push） |
+| `git merge <branch>` | post-merge | 合并成功后编译，编译通过后询问是否 push |
 | `git commit` | pre-commit + post-commit | **编译失败则阻止 commit**；成功后询问是否推送 |
 | `git rebase` | pre-rebase | **编译失败则阻止 rebase** |
 
@@ -86,14 +86,19 @@ mvn clean compile
 git pull origin main
   ↓
 [1] post-checkout hook (Python 3)
+    ├─ 写入标记: .git/AUTO_PULL_IN_PROGRESS
     ├─ 执行: git pull --no-rebase
+    ├─ 清除标记（finally）
     ├─ 如果是分支切换：继续执行编译
     └─ 调用: python3 build-on-hook.py "post-checkout"
   ↓
 [2] post-merge hook (Python 3)（合并成功时触发）
     └─ 调用: python3 build-on-hook.py "post-merge"
            ├─ 读取: build-config
-           └─ 顺序执行: 每条编译命令
+           ├─ 顺序执行: 每条编译命令
+           └─ 全部成功后: 检查标记文件
+               ├─ 标记存在 → 自动 pull 触发，跳过询问
+               └─ 标记不存在 → 手动 merge，询问 git push [y/N]
 ```
 
 ## 故障排除
@@ -145,6 +150,11 @@ git commit --no-verify -m "your message"
 ✅ [1] 命令执行成功
 ℹ️  ========================== 自动编译完成 ==========================
 ✅ 3 条编译命令全部执行成功！
+
+✅ 编译全部成功！
+是否执行 git push？[y/N]: y
+ℹ️  正在执行 git push ...
+✅ Push 成功！
 ```
 
 ## 重要提示
@@ -153,9 +163,10 @@ git commit --no-verify -m "your message"
 - **编译脚本语言** — 所有脚本均使用 Python 3，需要 Python 3.x 环境
 - **pre-commit 和 pre-rebase 会阻止操作** — 编译失败时无法 commit 或 rebase
 - **post-checkout 和 post-merge 不阻止操作** — 编译失败只输出错误，但 git 操作继续
+- **post-merge 仅手动 merge 后询问推送** — 自动 pull 触发的 merge 不询问；手动 merge 编译成功后提示 `[y/N]`，默认不推送；非交互环境自动跳过
 
 ---
 
-**更新日期：** 2026-03-17  
+**更新日期：** 2026-03-27  
 **脚本语言：** Python 3  
 **已验证的 Hooks：** post-checkout、post-commit、post-merge、pre-commit、pre-rebase
