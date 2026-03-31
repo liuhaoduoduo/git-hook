@@ -36,12 +36,12 @@
 .git/hooks/
 ├── build-on-hook.py          # ✅ 公共编译脚本（Python 3，核心逻辑）
 ├── build-config              # ✅ 编译命令配置（可随时修改）
-├── push-branch-config        # ✅ Push 分支禁推配置（精确匹配）
-├── post-checkout             # ✅ 分支切换后：自动 git pull + 编译
+├── branch-protection.conf    # ✅ 分支保护配置（Push 禁推 + 删除保护）
+├── post-checkout             # ✅ 分支切换后：自动 git pull（编译由 post-merge 触发）
 ├── post-merge                # ✅ 分支合并后：自动编译，手动 merge 成功后询问是否推送
 ├── pre-commit                # ✅ Commit 前：必须通过编译才能提交
 ├── post-commit               # ✅ Commit 后：询问是否推送到远程
-├── pre-push                  # ✅ Push 前：校验分支是否允许推送
+├── pre-push                  # ✅ Push 前：校验分支推送和删除保护
 └── pre-rebase                # ✅ Rebase 前：必须通过编译才能 rebase
 ```
 
@@ -49,11 +49,12 @@
 
 | Git 操作 | 触发的 Hooks | 特点 |
 |---------|------------|------|
-| `git checkout <branch>` | post-checkout | 自动拉取 + 编译 |
-| `git pull origin <branch>` | post-checkout + post-merge | 切换分支时拉取，合并成功时编译（不询问 push） |
+| `git checkout <branch>` | post-checkout + post-merge | 自动拉取，如果产生合并则由 post-merge 编译 |
+| `git pull origin <branch>` | post-merge | 合并成功时编译（自动 pull 不询问 push） |
 | `git merge <branch>` | post-merge | 合并成功后编译，编译通过后询问是否 push |
 | `git commit` | pre-commit + post-commit | **编译失败则阻止 commit**；成功后询问是否推送 |
-| `git push` | pre-push | **命中禁推分支则阻止 push**（手动和自动 push 均生效） |
+| `git push` | pre-push | **命中禁推分支或保护分支则阻止操作**（手动和自动 push 均生效） |
+| `git push --delete <branch>` | pre-push | **受保护分支禁止删除** |
 | `git rebase` | pre-rebase | **编译失败则阻止 rebase** |
 
 ## 配置管理
@@ -83,43 +84,57 @@ mvn clean compile
 - 支持完整 shell 语法（`&&`、`||`、`|`、变量等）
 - **修改后立即生效**，下次 hook 触发时生效
 
-### 配置 Push 禁推分支
+### 配置 Push 禁推和分支删除保护
 
-编辑 `.git/hooks/push-branch-config` 文件：
+编辑 `.git/hooks/branch-protection.conf` 文件：
 
 ```bash
-code .git/hooks/push-branch-config
+code .git/hooks/branch-protection.conf
 ```
 
 **配置示例：**
 
-```bash
-# 禁止推送分支（精确匹配）
-master
+```properties
+# ===== 禁止推送的分支 =====
+# 段落为空时：拒绝所有推送
+[push-forbidden]
 main
+master
 production
+
+# ===== 禁止删除的分支 =====
+# 段落为空时：保护所有分支
+[delete-protected]
+main
+master
+production
+develop
 ```
 
 **说明：**
-- 每行一个分支名（仅精确匹配）
+- 使用段落式配置：`[push-forbidden]` 和 `[delete-protected]`
+- 每行一个分支名（精确匹配）
 - `#` 开头的行为注释，空行被忽略
-- 命中列表中的分支时，`git push` 会被直接拒绝
+- **Push 保护**：命中 `[push-forbidden]` 中的分支时，`git push` 会被直接拒绝
+- **删除保护**：执行 `git push --delete <branch>` 时，如果分支在 `[delete-protected]` 中会被拒绝
 - 该校验由 `pre-push` 统一执行，因此对手动 push 和 hook 自动触发的 push 都生效
-- **默认拒绝策略**：配置文件不存在或为空时，拒绝所有 push
+- **默认保护策略**：
+  - `[push-forbidden]` 段落为空或不存在时：拒绝所有 push
+  - `[delete-protected]` 段落为空或不存在时：保护所有分支禁止删除
 
 ## 工作原理
 
+### 分支切换自动拉取和编译流程
+
 ```
-git pull origin main
+git checkout feature
   ↓
 [1] post-checkout hook (Python 3)
-    ├─ 写入标记: .git/AUTO_PULL_IN_PROGRESS
+    ├─ 创建标记: .git/AUTO_PULL_IN_PROGRESS
     ├─ 执行: git pull --no-rebase
-    ├─ 清除标记（finally）
-    ├─ 如果是分支切换：继续执行编译
-    └─ 调用: python3 build-on-hook.py "post-checkout"
+    └─ 清除标记（finally）
   ↓
-[2] post-merge hook (Python 3)（合并成功时触发）
+[2] post-merge hook (Python 3)（如果 pull 触发了合并）
     └─ 调用: python3 build-on-hook.py "post-merge"
            ├─ 读取: build-config
            ├─ 顺序执行: 每条编译命令
@@ -127,6 +142,35 @@ git pull origin main
                ├─ 标记存在 → 自动 pull 触发，跳过询问
                └─ 标记不存在 → 手动 merge，询问 git push [y/N]
 ```
+
+**工作流程说明：**
+- post-checkout 负责代码同步（git pull），不执行编译
+- post-merge 负责编译和推送询问
+- 通过 `.git/AUTO_PULL_IN_PROGRESS` 标记文件协作，区分自动 pull 和手动 merge
+- 自动 pull 触发的编译成功后静默完成，手动 merge 后会询问是否推送
+
+## 技术细节
+
+### Python 环境要求
+- 所有脚本使用 Python 3
+- 需要系统中有 `python3` 命令
+- 支持 Python 3.6+
+
+### 用户输入机制
+- `post-commit` 和 `post-merge` 从 `/dev/tty` 读取用户输入
+- Git hook 的 stdin 被重定向，无法使用标准 `input()`
+- **CI/非交互环境**：无法打开 `/dev/tty` 时自动跳过交互，不会阻塞
+
+### goenv 自动初始化
+- `build-on-hook.py` 在执行编译前自动初始化 goenv
+- 执行 `eval "$(goenv init -)" || true` 初始化 Go 环境
+- 失败时不影响后续命令执行（使用 `|| true`）
+- 非 Go 项目环境可安全忽略
+
+### 标记文件机制
+- `.git/AUTO_PULL_IN_PROGRESS` - 标记自动 pull 触发的 merge
+- 由 post-checkout 创建，post-merge 读取并清理
+- finally 块确保异常时也能清理
 
 ## 故障排除
 
@@ -168,6 +212,41 @@ git commit --no-verify -m "your message"
 - 若远程分支不存在，会自动跳过拉取
 - 若拉取有冲突，hook 会提示，但**不阻止分支切换**
 - 需要手动解决冲突并继续编译
+
+### Q5: 为什么配置了 push-branch-config 但不生效？
+
+**原因**：文件名错误
+
+**解决**：
+```bash
+# ❌ 错误的文件名（已废弃）
+.git/hooks/push-branch-config
+
+# ✅ 正确的文件名
+.git/hooks/branch-protection.conf
+```
+
+### Q6: 删除分支被拒绝但我没有配置保护？
+
+**原因**：默认保护策略 - `[delete-protected]` 段落为空或不存在时保护所有分支
+
+**解决**：
+在 `branch-protection.conf` 中明确配置允许删除的策略：
+```properties
+[delete-protected]
+main
+master
+# 仅保护 main 和 master，其他分支可删除
+```
+
+### Q7: CI 环境中 post-commit/post-merge 卡住？
+
+**原因**：非交互环境无法打开 `/dev/tty` 读取用户输入
+
+**解决**：
+- 脚本会自动检测并跳过交互，不会阻塞
+- 确保 CI 环境中 `/dev/tty` 不可用时脚本能正常退出（代码已处理）
+- 如果仍然卡住，检查 Python 版本和错误日志
 
 ## 输出示例
 
