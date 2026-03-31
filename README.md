@@ -36,10 +36,12 @@
 .git/hooks/
 ├── build-on-hook.py          # ✅ 公共编译脚本（Python 3，核心逻辑）
 ├── build-config              # ✅ 编译命令配置（可随时修改）
+├── push-branch-config        # ✅ Push 分支禁推配置（精确匹配）
 ├── post-checkout             # ✅ 分支切换后：自动 git pull + 编译
 ├── post-merge                # ✅ 分支合并后：自动编译，手动 merge 成功后询问是否推送
 ├── pre-commit                # ✅ Commit 前：必须通过编译才能提交
 ├── post-commit               # ✅ Commit 后：询问是否推送到远程
+├── pre-push                  # ✅ Push 前：校验分支是否允许推送
 └── pre-rebase                # ✅ Rebase 前：必须通过编译才能 rebase
 ```
 
@@ -51,6 +53,7 @@
 | `git pull origin <branch>` | post-checkout + post-merge | 切换分支时拉取，合并成功时编译（不询问 push） |
 | `git merge <branch>` | post-merge | 合并成功后编译，编译通过后询问是否 push |
 | `git commit` | pre-commit + post-commit | **编译失败则阻止 commit**；成功后询问是否推送 |
+| `git push` | pre-push | **命中禁推分支则阻止 push**（手动和自动 push 均生效） |
 | `git rebase` | pre-rebase | **编译失败则阻止 rebase** |
 
 ## 配置管理
@@ -79,6 +82,30 @@ mvn clean compile
 - 命令**按顺序执行**，前一条失败会停止后续
 - 支持完整 shell 语法（`&&`、`||`、`|`、变量等）
 - **修改后立即生效**，下次 hook 触发时生效
+
+### 配置 Push 禁推分支
+
+编辑 `.git/hooks/push-branch-config` 文件：
+
+```bash
+code .git/hooks/push-branch-config
+```
+
+**配置示例：**
+
+```bash
+# 禁止推送分支（精确匹配）
+master
+main
+production
+```
+
+**说明：**
+- 每行一个分支名（仅精确匹配）
+- `#` 开头的行为注释，空行被忽略
+- 命中列表中的分支时，`git push` 会被直接拒绝
+- 该校验由 `pre-push` 统一执行，因此对手动 push 和 hook 自动触发的 push 都生效
+- **默认拒绝策略**：配置文件不存在或为空时，拒绝所有 push
 
 ## 工作原理
 
@@ -109,7 +136,7 @@ git pull origin main
 
 1. 文件是否可执行：
    ```bash
-   ls -lah .git/hooks/{build-on-hook.py,post-checkout,post-merge,pre-commit,pre-rebase}
+   ls -lah .git/hooks/{build-on-hook.py,post-checkout,post-merge,pre-commit,post-commit,pre-push,pre-rebase}
    ```
    应看到 `rwxr-xr-x` 权限
 
@@ -162,11 +189,12 @@ git commit --no-verify -m "your message"
 - **.git/hooks 不在版本控制范围内** — 这些文件是本地的，不会被 git push
 - **编译脚本语言** — 所有脚本均使用 Python 3，需要 Python 3.x 环境
 - **pre-commit 和 pre-rebase 会阻止操作** — 编译失败时无法 commit 或 rebase
+- **pre-push 会阻止 push** — 命中禁推分支时，push 会被拒绝（手动/自动均生效）
 - **post-checkout 和 post-merge 不阻止操作** — 编译失败只输出错误，但 git 操作继续
 - **post-merge 仅手动 merge 后询问推送** — 自动 pull 触发的 merge 不询问；手动 merge 编译成功后提示 `[y/N]`，默认不推送；非交互环境自动跳过
 
 ---
 
-**更新日期：** 2026-03-27  
+**更新日期：** 2026-03-31  
 **脚本语言：** Python 3  
-**已验证的 Hooks：** post-checkout、post-commit、post-merge、pre-commit、pre-rebase
+**已验证的 Hooks：** post-checkout、post-commit、post-merge、pre-commit、pre-push、pre-rebase
