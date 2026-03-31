@@ -3,17 +3,20 @@
 """
 Git pre-push 钩子脚本（Python 3 版本）
 
-功能：在执行 push 前校验目标分支是否允许推送
+功能：
+  1. 校验目标分支是否允许推送
+  2. 校验是否允许删除远程分支
 
 规则：
-  - 从 .git/hooks/push-branch-config 读取禁止推送分支（精确匹配）
-  - 如果配置文件不存在或为空：默认拒绝所有 push
-  - 命中禁止分支：阻止 push（返回非 0）
+  - 从 .git/hooks/branch-protection.conf 读取配置
+  - [push-forbidden]: 禁止推送的分支列表（为空时拒绝所有推送）
+  - [delete-protected]: 禁止删除的分支列表（为空时保护所有分支）
 """
 
 import subprocess
 import sys
 from pathlib import Path
+from typing import Dict, Set
 
 
 # 颜色定义
@@ -38,38 +41,167 @@ def get_git_dir() -> str:
         return ""
 
 
-def load_forbidden_branches(config_path: Path) -> set[str]:
-    """读取禁止推送分支列表（精确匹配）"""
-    forbidden: set[str] = set()
+def load_branch_config(config_path: Path) -> Dict[str, Set[str]]:
+    """
+    读取分支保护配置文件
+    
+    配置格式：
+        [push-forbidden]
+        main
+        master
+        
+        [delete-protected]
+        main
+        master
+        develop
+    
+    返回：
+        {
+            'push-forbidden': {'main', 'master'},
+            'delete-protected': {'main', 'master', 'develop'}
+        }
+    """
+    VALID_SECTIONS = {'push-forbidden', 'delete-protected'}
+    config: Dict[str, Set[str]] = {
+        'push-forbidden': set(),
+        'delete-protected': set()
+    }
+    
+    if not config_path.exists():
+        return config
+    
     try:
+        current_section = None
+        line_number = 0
         with config_path.open(encoding='utf-8') as f:
             for raw in f:
+                line_number += 1
                 line = raw.strip()
+                
+                # 跳过空行和注释
                 if not line or line.startswith('#'):
                     continue
-                forbidden.add(line)
+                
+                # 检测段落标题
+                if line.startswith('[') and line.endswith(']'):
+                    section_name = line[1:-1].strip()
+                    if section_name in VALID_SECTIONS:
+                        current_section = section_name
+                    else:
+                        print(
+                            f"{YELLOW}⚠️  警告：{config_path} 第 {line_number} 行包含未知段落 [{section_name}]，已忽略{NC}",
+                            file=sys.stderr
+                        )
+                        print(
+                            f"{YELLOW}   支持的段落：[push-forbidden], [delete-protected]{NC}",
+                            file=sys.stderr
+                        )
+                        current_section = None
+                    continue
+                
+                # 添加分支到当前段落
+                if current_section:
+                    config[current_section].add(line)
+    
     except (OSError, IOError):
-        return set()
-    return forbidden
+        return config
+    
+    return config
 
 
-def extract_target_branches_from_stdin() -> list[str]:
-    """从 pre-push 的 stdin 中提取目标分支名称"""
-    branches: list[str] = []
+def parse_push_refs() -> tuple[list[str], list[str]]:
+    """
+    从 pre-push 的 stdin 中解析推送和删除操作
+    
+    返回：
+        (push_branches, delete_branches) - 推送的分支列表和删除的分支列表
+    """
+    push_branches: list[str] = []
+    delete_branches: list[str] = []
+    
     data = sys.stdin.read()
     if not data:
-        return branches
+        return push_branches, delete_branches
 
     for line in data.splitlines():
         parts = line.strip().split()
         if len(parts) != 4:
             continue
 
-        _local_ref, _local_sha, remote_ref, _remote_sha = parts
+        local_ref, local_sha, remote_ref, remote_sha = parts
+        
+        # 提取分支名
         if remote_ref.startswith('refs/heads/'):
-            branches.append(remote_ref[len('refs/heads/'):])
+            branch_name = remote_ref[len('refs/heads/'):]
+            
+            # 检查是否为删除操作（local_sha 为全 0）
+            if local_sha == '0' * 40:
+                delete_branches.append(branch_name)
+            else:
+                push_branches.append(branch_name)
 
-    return branches
+    return push_branches, delete_branches
+
+
+def check_push_forbidden(
+    branches: list[str], 
+    forbidden: Set[str], 
+    config_file: Path
+) -> bool:
+    """
+    检查推送分支是否被禁止
+    
+    返回：True 表示通过检查，False 表示被拦截
+    """
+    if not branches:
+        return True
+    
+    # 默认拒绝策略：配置不存在或段落为空，直接拒绝 push
+    if not config_file.exists() or not forbidden:
+        print(f"{RED}❌ push 已被拒绝：禁推分支配置缺失或为空{NC}", file=sys.stderr)
+        print(f"{YELLOW}⚠️  请在 {config_file} 的 [push-forbidden] 段落中配置禁推分支列表{NC}", file=sys.stderr)
+        return False
+
+    # 检查是否推送到禁止的分支
+    blocked = [branch for branch in branches if branch in forbidden]
+    if blocked:
+        joined = ", ".join(sorted(set(blocked)))
+        print(f"{RED}❌ push 已被拒绝：检测到禁止推送分支 -> {joined}{NC}", file=sys.stderr)
+        return False
+    
+    return True
+
+
+def check_delete_protected(
+    branches: list[str], 
+    protected: Set[str], 
+    config_file: Path
+) -> bool:
+    """
+    检查删除分支是否受保护
+    
+    返回：True 表示通过检查，False 表示被拦截
+    """
+    if not branches:
+        return True  # 没有删除操作，直接通过
+    
+    # 如果配置文件不存在或段落为空，保护所有分支
+    if not config_file.exists() or not protected:
+        joined = ", ".join(sorted(set(branches)))
+        print(f"{RED}❌ 删除分支已被拒绝：'{joined}'{NC}", file=sys.stderr)
+        print(f"{YELLOW}ℹ️  提示：当前保护所有分支（[delete-protected] 段落为空或不存在）{NC}", file=sys.stderr)
+        print(f"{YELLOW}   如需允许删除，请在 {config_file} 的 [delete-protected] 段落中配置受保护分支列表{NC}", file=sys.stderr)
+        return False
+    
+    # 检查要删除的分支是否在保护列表中
+    blocked = [branch for branch in branches if branch in protected]
+    if blocked:
+        joined = ", ".join(sorted(set(blocked)))
+        print(f"{RED}❌ 删除分支已被拒绝：不允许删除受保护的分支 '{joined}'{NC}", file=sys.stderr)
+        print(f"{YELLOW}ℹ️  受保护的分支列表：{', '.join(sorted(protected))}{NC}", file=sys.stderr)
+        return False
+    
+    return True
 
 
 def main() -> int:
@@ -78,24 +210,27 @@ def main() -> int:
         print(f"{RED}❌ 无法获取 Git 目录，已拒绝 push{NC}", file=sys.stderr)
         return 1
 
-    config_file = Path(git_dir) / "hooks" / "push-branch-config"
-    forbidden = load_forbidden_branches(config_file)
+    config_file = Path(git_dir) / "hooks" / "branch-protection.conf"
+    config = load_branch_config(config_file)
 
-    # 默认拒绝策略：配置不存在或为空，直接拒绝 push
-    if not config_file.exists() or not forbidden:
-        print(f"{RED}❌ push 已被拒绝：禁推分支配置缺失或为空{NC}", file=sys.stderr)
-        print(f"{YELLOW}⚠️  请在 {config_file} 中配置禁推分支列表{NC}", file=sys.stderr)
-        return 1
+    # 解析推送操作
+    push_branches, delete_branches = parse_push_refs()
 
-    target_branches = extract_target_branches_from_stdin()
+    # 检查推送分支限制
+    if push_branches:
+        if not check_push_forbidden(push_branches, config['push-forbidden'], config_file):
+            return 1
+        print(f"{GREEN}✅ 推送分支校验通过{NC}")
 
-    blocked = [branch for branch in target_branches if branch in forbidden]
-    if blocked:
-        joined = ", ".join(sorted(set(blocked)))
-        print(f"{RED}❌ push 已被拒绝：检测到禁止推送分支 -> {joined}{NC}", file=sys.stderr)
-        return 1
+    # 检查删除分支保护
+    if delete_branches:
+        if not check_delete_protected(delete_branches, config['delete-protected'], config_file):
+            return 1
+        print(f"{GREEN}✅ 删除分支校验通过{NC}")
 
-    print(f"{GREEN}✅ 分支校验通过，允许 push{NC}")
+    if not push_branches and not delete_branches:
+        print(f"{BLUE}ℹ️  无需检查（无推送或删除操作）{NC}")
+
     return 0
 
 
