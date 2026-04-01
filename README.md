@@ -51,11 +51,11 @@
 |---------|------------|------|
 | `git checkout <branch>` | post-checkout + post-merge | 自动拉取，如果产生合并则由 post-merge 编译 |
 | `git pull origin <branch>` | post-merge | 合并成功时编译（自动 pull 不询问 push） |
-| `git merge <branch>` | post-merge | 合并成功后编译，编译通过后询问是否 push |
+| `git merge <branch>` | post-merge | 合并成功后编译，编译通过后询问是否 push；**合并保护分支时拒绝** |
 | `git commit` | pre-commit + post-commit | **编译失败则阻止 commit**；成功后询问是否推送 |
 | `git push` | pre-push | **命中禁推分支或保护分支则阻止操作**（手动和自动 push 均生效） |
 | `git push --delete <branch>` | pre-push | **受保护分支禁止删除** |
-| `git rebase` | pre-rebase | **编译失败则阻止 rebase** |
+| `git rebase` | pre-rebase | **编译失败则阻止 rebase**；**rebase 到保护分支时拒绝** |
 
 ## 配置管理
 
@@ -84,7 +84,7 @@ mvn clean compile
 - 支持完整 shell 语法（`&&`、`||`、`|`、变量等）
 - **修改后立即生效**，下次 hook 触发时生效
 
-### 配置 Push 禁推和分支删除保护
+### 配置分支保护
 
 编辑 `.git/hooks/branch-protection.conf` 文件：
 
@@ -95,32 +95,30 @@ code .git/hooks/branch-protection.conf
 **配置示例：**
 
 ```properties
-# ===== 禁止推送的分支 =====
-# 段落为空时：拒绝所有推送
-[push-forbidden]
-main
-master
-production
+# Git 分支保护配置文件
+# 列出的分支受到全面保护，包括：
+#   - 禁止推送（git push origin <branch>）
+#   - 禁止删除（git push origin --delete <branch>）
+#   - 禁止其他分支 merge（仅允许 git pull origin <branch> 自身更新）
+#   - 禁止其他分支 rebase（仅允许 git rebase origin/<branch> 自身更新）
 
-# ===== 禁止删除的分支 =====
-# 段落为空时：保护所有分支
-[delete-protected]
 main
 master
-production
 develop
+release
+hotfix
 ```
 
 **说明：**
-- 使用段落式配置：`[push-forbidden]` 和 `[delete-protected]`
-- 每行一个分支名（精确匹配）
+- 纯分支列表格式，每行一个分支名（精确匹配）
 - `#` 开头的行为注释，空行被忽略
-- **Push 保护**：命中 `[push-forbidden]` 中的分支时，`git push` 会被直接拒绝
-- **删除保护**：执行 `git push --delete <branch>` 时，如果分支在 `[delete-protected]` 中会被拒绝
-- 该校验由 `pre-push` 统一执行，因此对手动 push 和 hook 自动触发的 push 都生效
-- **默认保护策略**：
-  - `[push-forbidden]` 段落为空或不存在时：拒绝所有 push
-  - `[delete-protected]` 段落为空或不存在时：保护所有分支禁止删除
+- **全面保护**：列出的分支同时禁止推送、删除、merge 和 rebase
+  - `git push origin <branch>` — 直接拒绝
+  - `git push origin --delete <branch>` — 直接拒绝
+  - `git merge <protected-branch>`（从其他分支 merge）— 由 `pre-merge` 检查拒绝
+  - `git rebase <protected-branch>`（从其他分支 rebase）— 由 `pre-rebase` 检查拒绝
+- 该校验对手动操作和 hook 自动触发的操作都生效
+- **默认保护策略**：配置为空（仅注释）时，保护所有分支
 
 ## 工作原理
 
