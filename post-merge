@@ -3,20 +3,25 @@
 """
 Git post-merge 钩子脚本（Python 3 版本）
 
-功能：在分支合并（包括 git pull 中的合并步骤）后自动执行编译操作
-      仅在手动 merge 且编译全部成功后询问是否执行 git push
-      （切换分支自动 pull 触发的 merge 不询问）
+功能：
+  1. 检查 merge 是否被 merge-protected 规则允许
+     - 若当前分支在保护列表中，仅允许来自自身的 merge（git pull origin <branch>）
+     - 其他分支的 merge 会被自动回滚
+  2. 在分支合并后自动执行编译操作
+  3. 仅在手动 merge 且编译全部成功后询问是否执行 git push
 
 触发场景：
   - git merge <branch>
   - git pull origin <branch>（成功合并时）
   - git rebase --continue（完成时）
 
-
 配置：
-    编译命令列表在 .git/hooks/build-config 文件中维护
+  - 编译命令列表在 .git/hooks/build-config 文件中维护
+  - Merge 保护规则在 .git/hooks/branch-protection.conf 文件中的 [merge-protected] 段落中维护
 
-注意：此脚本不会阻止 merge 操作，即使编译失败也会完成合并
+注意：
+  - 若 merge 被拒绝，会自动回滚（git merge --abort）并返回非零状态码
+  - 否则此脚本不会阻止 merge 操作，即使编译失败也会完成合并
 """
 
 import subprocess
@@ -46,6 +51,201 @@ def get_git_dir() -> str:
         return ""
 
 
+def get_current_branch() -> str:
+    """获取当前所在分支"""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        return result.stdout.strip()
+    except subprocess.CalledProcessError:
+        return ""
+
+
+def get_merge_source_branch() -> str:
+    """
+    获取当前 merge 操作的源分支名（不依赖 commit message）
+    
+    原理：
+      .git/MERGE_HEAD 记录了 merge 源 commit SHA
+      通过 git branch -r --contains 或 git branch --contains 查询包含该 commit 的分支
+      返回最近的分支名（移除 origin/ 前缀）
+    
+    返回：
+      源分支名（如 'feature-x'）或空字符串（失败/不在 merge 状态）
+    """
+    try:
+        git_dir = get_git_dir()
+        if not git_dir:
+            return ""
+        
+        merge_head_file = Path(git_dir) / "MERGE_HEAD"
+        if not merge_head_file.exists():
+            # 不在 merge 状态
+            return ""
+        
+        merge_sha = merge_head_file.read_text(encoding='utf-8').strip()
+        
+        # 首先查询远程分支（优先级高）
+        result = subprocess.run(
+            ["git", "branch", "-r", "--contains", merge_sha],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        
+        branches = [b.strip() for b in result.stdout.strip().split('\n') if b.strip()]
+        
+        # 从远程分支列表中找到合适的分支
+        for branch in branches:
+            if not branch.endswith("/HEAD"):
+                # 移除 origin/ 前缀 (如 "origin/feature-x" -> "feature-x")
+                return branch.replace("origin/", "")
+        
+        # 如果没有找到远程分支，尝试查询本地分支
+        result = subprocess.run(
+            ["git", "branch", "--contains", merge_sha],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        
+        branches = [b.strip() for b in result.stdout.strip().split('\n') if b.strip()]
+        
+        # 返回第一个非当前分支的分支（当前分支前面会有 * 标记）
+        for branch in branches:
+            if not branch.startswith('*'):
+                return branch.strip()
+        
+        return ""
+    except Exception as e:
+        print(f"{YELLOW}⚠️  警告：无法识别 merge 源分支 ({e}){NC}", file=sys.stderr)
+        return ""
+
+
+def load_merge_protected_config(config_path: Path) -> set:
+    """
+    读取 merge 保护配置
+    
+    返回：
+      受保护分支的集合。空集表示配置段落不存在或为空（触发保护所有分支）
+    """
+    protected = set()
+    
+    if not config_path.exists():
+        return protected
+    
+    try:
+        current_section = None
+        with config_path.open(encoding='utf-8') as f:
+            for line in f:
+                raw_line = line.rstrip('\n\r')
+                line_stripped = raw_line.strip()
+                
+                # 跳过空行和注释
+                if not line_stripped or line_stripped.startswith('#'):
+                    continue
+                
+                # 检测段落标题
+                if line_stripped.startswith('[') and line_stripped.endswith(']'):
+                    section_name = line_stripped[1:-1].strip()
+                    if section_name == 'merge-protected':
+                        current_section = section_name
+                    else:
+                        current_section = None
+                    continue
+                
+                # 在 merge-protected 段落中读取分支名
+                if current_section == 'merge-protected':
+                    branch_name = line_stripped.strip()
+                    if branch_name:
+                        protected.add(branch_name)
+        
+        return protected
+    except Exception as e:
+        print(f"{YELLOW}⚠️  警告：读取 merge-protected 配置失败 ({e}){NC}", file=sys.stderr)
+        return set()
+
+
+def check_merge_allowed(current_branch: str, source_branch: str, protected_branches: set) -> bool:
+    """
+    检查当前 merge 是否被允许
+    
+    规则：
+      - 若当前分支不在保护列表中，允许
+      - 若当前分支在保护列表中：
+        * 若源分支等于当前分支，允许（git pull origin <branch> 自身更新）
+        * 否则禁止（拒绝其他分支 merge）
+    
+    Args:
+      current_branch: 当前所在分支（如 'main'）
+      source_branch: merge 的源分支（如 'feature-x'）
+      protected_branches: 保护分支集合
+    
+    返回：
+      True 允许，False 禁止
+    """
+    # 若配置为空或当前分支不在保护列表中，允许
+    if not protected_branches or current_branch not in protected_branches:
+        return True
+    
+    # 当前分支受保护，检查源分支是否来自自身
+    # 只允许源分支与当前分支名相同的 merge（即 git pull origin <branch>）
+    if source_branch == current_branch:
+        return True
+    
+    # 其他情况禁止
+    return False
+
+
+def abort_merge_with_error(current_branch: str, source_branch: str, protected_branches: set) -> int:
+    """
+    回滚 merge 并输出详细错误消息
+    
+    返回：1（非零退出码，表示 merge 被拒绝）
+    """
+    print()
+    print(f"{RED}❌ Merge 操作被禁止！{NC}")
+    print()
+    print(f"{BLUE}当前分支:{NC} {current_branch}")
+    print(f"{BLUE}合并源分支:{NC} {source_branch}")
+    print()
+    
+    if protected_branches:
+        print(f"{BLUE}原因:{NC} 分支 '{current_branch}' 在 merge 保护列表中")
+    else:
+        print(f"{BLUE}原因:{NC} 所有分支都被 merge 保护（[merge-protected] 配置为空）")
+    
+    print()
+    print(f"{BLUE}规则:{NC}")
+    print(f"  • 分支 '{current_branch}' 只允许执行 git pull origin {current_branch}")
+    print(f"  • 不允许其他分支（如 '{source_branch}'）merge 进来")
+    print()
+    print(f"{YELLOW}💡 提示:{NC} 如需修改此规则，请编辑 .git/hooks/branch-protection.conf")
+    print(f"        的 [merge-protected] 段落")
+    print()
+    
+    # 回滚 merge
+    try:
+        result = subprocess.run(
+            ["git", "merge", "--abort"],
+            capture_output=True,
+            text=True
+        )
+        if result.returncode == 0:
+            print(f"{GREEN}✅ 已自动回滚 merge 操作{NC}")
+        else:
+            print(f"{RED}❌ 回滚失败:{NC} {result.stderr}", file=sys.stderr)
+    except Exception as e:
+        print(f"{RED}❌ 回滚失败:{NC} {e}", file=sys.stderr)
+    
+    print()
+    return 1
+
+
 def prompt_push() -> None:
     """编译成功后询问用户是否执行 git push"""
     try:
@@ -69,12 +269,30 @@ def prompt_push() -> None:
 
 
 def main() -> int:
-    """主函数：调用公共编译脚本，编译成功后询问是否 push"""
+    """主函数：先检查 merge 保护规则，再调用编译脚本"""
     git_dir = get_git_dir()
     if not git_dir:
         print("Error: Could not determine git directory", file=sys.stderr)
         return 1
     
+    # ========== 第一步：检查 merge 保护规则 ==========
+    current_branch = get_current_branch()
+    if not current_branch:
+        print(f"{YELLOW}⚠️  警告：无法获取当前分支名{NC}", file=sys.stderr)
+    else:
+        # 加载 merge-protected 配置
+        config_path = Path(git_dir) / "hooks" / "branch-protection.conf"
+        protected_branches = load_merge_protected_config(config_path)
+        
+        # 获取 merge 源分支
+        source_branch = get_merge_source_branch()
+        
+        # 检查 merge 是否被允许
+        if not check_merge_allowed(current_branch, source_branch, protected_branches):
+            # merge 被拒绝，自动回滚
+            return abort_merge_with_error(current_branch, source_branch, protected_branches)
+    
+    # ========== 第二步：执行编译脚本 ==========
     build_script = Path(git_dir) / "hooks" / "build-on-hook.py"
     
     if not build_script.exists():
