@@ -41,72 +41,39 @@ def get_git_dir() -> str:
         return ""
 
 
-def load_branch_config(config_path: Path) -> Dict[str, Set[str]]:
+def load_protected_branches(config_path: Path) -> Set[str]:
     """
     读取分支保护配置文件
     
-    配置格式：
-        [push-forbidden]
-        main
-        master
-        
-        [delete-protected]
+    配置格式：纯分支列表
         main
         master
         develop
     
     返回：
-        {
-            'push-forbidden': {'main', 'master'},
-            'delete-protected': {'main', 'master', 'develop'}
-        }
+        受保护分支的集合
     """
-    VALID_SECTIONS = {'push-forbidden', 'delete-protected'}
-    config: Dict[str, Set[str]] = {
-        'push-forbidden': set(),
-        'delete-protected': set()
-    }
+    protected = set()
     
     if not config_path.exists():
-        return config
+        return protected
     
     try:
-        current_section = None
-        line_number = 0
         with config_path.open(encoding='utf-8') as f:
-            for raw in f:
-                line_number += 1
-                line = raw.strip()
+            for line in f:
+                line = line.strip()
                 
                 # 跳过空行和注释
                 if not line or line.startswith('#'):
                     continue
                 
-                # 检测段落标题
-                if line.startswith('[') and line.endswith(']'):
-                    section_name = line[1:-1].strip()
-                    if section_name in VALID_SECTIONS:
-                        current_section = section_name
-                    else:
-                        print(
-                            f"{YELLOW}⚠️  警告：{config_path} 第 {line_number} 行包含未知段落 [{section_name}]，已忽略{NC}",
-                            file=sys.stderr
-                        )
-                        print(
-                            f"{YELLOW}   支持的段落：[push-forbidden], [delete-protected]{NC}",
-                            file=sys.stderr
-                        )
-                        current_section = None
-                    continue
-                
-                # 添加分支到当前段落
-                if current_section:
-                    config[current_section].add(line)
+                # 添加分支到保护列表
+                protected.add(line)
     
     except (OSError, IOError):
-        return config
+        return protected
     
-    return config
+    return protected
 
 
 def parse_push_refs() -> tuple[list[str], list[str]]:
@@ -211,20 +178,20 @@ def main() -> int:
         return 1
 
     config_file = Path(git_dir) / "hooks" / "branch-protection.conf"
-    config = load_branch_config(config_file)
+    protected_branches = load_protected_branches(config_file)
 
     # 解析推送操作
     push_branches, delete_branches = parse_push_refs()
 
     # 检查推送分支限制
     if push_branches:
-        if not check_push_forbidden(push_branches, config['push-forbidden'], config_file):
+        if not check_push_forbidden(push_branches, protected_branches, config_file):
             return 1
         print(f"{GREEN}✅ 推送分支校验通过{NC}")
 
     # 检查删除分支保护
     if delete_branches:
-        if not check_delete_protected(delete_branches, config['delete-protected'], config_file):
+        if not check_delete_protected(delete_branches, protected_branches, config_file):
             return 1
         print(f"{GREEN}✅ 删除分支校验通过{NC}")
 

@@ -126,12 +126,12 @@ def get_merge_source_branch() -> str:
         return ""
 
 
-def load_merge_protected_config(config_path: Path) -> set:
+def load_protected_branches(config_path: Path) -> set:
     """
-    读取 merge 保护配置
+    读取分支保护配置
     
     返回：
-      受保护分支的集合。空集表示配置段落不存在或为空（触发保护所有分支）
+      受保护分支的集合。空集表示配置为空（触发保护所有分支）
     """
     protected = set()
     
@@ -139,34 +139,20 @@ def load_merge_protected_config(config_path: Path) -> set:
         return protected
     
     try:
-        current_section = None
         with config_path.open(encoding='utf-8') as f:
             for line in f:
-                raw_line = line.rstrip('\n\r')
-                line_stripped = raw_line.strip()
+                line = line.strip()
                 
                 # 跳过空行和注释
-                if not line_stripped or line_stripped.startswith('#'):
+                if not line or line.startswith('#'):
                     continue
                 
-                # 检测段落标题
-                if line_stripped.startswith('[') and line_stripped.endswith(']'):
-                    section_name = line_stripped[1:-1].strip()
-                    if section_name == 'merge-protected':
-                        current_section = section_name
-                    else:
-                        current_section = None
-                    continue
-                
-                # 在 merge-protected 段落中读取分支名
-                if current_section == 'merge-protected':
-                    branch_name = line_stripped.strip()
-                    if branch_name:
-                        protected.add(branch_name)
+                # 添加分支到保护列表
+                protected.add(line)
         
         return protected
     except Exception as e:
-        print(f"{YELLOW}⚠️  警告：读取 merge-protected 配置失败 ({e}){NC}", file=sys.stderr)
+        print(f"{YELLOW}⚠️  警告：读取 protected 配置失败 ({e}){NC}", file=sys.stderr)
         return set()
 
 
@@ -215,9 +201,9 @@ def abort_merge_with_error(current_branch: str, source_branch: str, protected_br
     print()
     
     if protected_branches:
-        print(f"{BLUE}原因:{NC} 分支 '{current_branch}' 在 merge 保护列表中")
+        print(f"{BLUE}原因:{NC} 分支 '{current_branch}' 在保护列表中")
     else:
-        print(f"{BLUE}原因:{NC} 所有分支都被 merge 保护（[merge-protected] 配置为空）")
+        print(f"{BLUE}原因:{NC} 所有分支都被保护（branch-protection.conf 为空）")
     
     print()
     print(f"{BLUE}规则:{NC}")
@@ -225,20 +211,30 @@ def abort_merge_with_error(current_branch: str, source_branch: str, protected_br
     print(f"  • 不允许其他分支（如 '{source_branch}'）merge 进来")
     print()
     print(f"{YELLOW}💡 提示:{NC} 如需修改此规则，请编辑 .git/hooks/branch-protection.conf")
-    print(f"        的 [merge-protected] 段落")
     print()
     
-    # 回滚 merge
+    # 回滚 merge：由于 post-merge 在 merge 完成后触发，git merge --abort 无效
+    # 需要使用 git reset 来回滚到 merge 前的状态
     try:
+        # 尝试使用 ORIG_HEAD（merge 前的 HEAD）回滚
         result = subprocess.run(
-            ["git", "merge", "--abort"],
+            ["git", "reset", "--hard", "ORIG_HEAD"],
             capture_output=True,
             text=True
         )
         if result.returncode == 0:
-            print(f"{GREEN}✅ 已自动回滚 merge 操作{NC}")
+            print(f"{GREEN}✅ 已通过 git reset --hard ORIG_HEAD 回滚 merge 操作{NC}")
         else:
-            print(f"{RED}❌ 回滚失败:{NC} {result.stderr}", file=sys.stderr)
+            # 降级：尝试 HEAD~1
+            result = subprocess.run(
+                ["git", "reset", "--hard", "HEAD~1"],
+                capture_output=True,
+                text=True
+            )
+            if result.returncode == 0:
+                print(f"{GREEN}✅ 已通过 git reset --hard HEAD~1 回滚 merge 操作{NC}")
+            else:
+                print(f"{RED}❌ 回滚失败，请手动执行 git reset --hard HEAD~1{NC}", file=sys.stderr)
     except Exception as e:
         print(f"{RED}❌ 回滚失败:{NC} {e}", file=sys.stderr)
     
@@ -280,9 +276,9 @@ def main() -> int:
     if not current_branch:
         print(f"{YELLOW}⚠️  警告：无法获取当前分支名{NC}", file=sys.stderr)
     else:
-        # 加载 merge-protected 配置
+        # 加载 protected 配置
         config_path = Path(git_dir) / "hooks" / "branch-protection.conf"
-        protected_branches = load_merge_protected_config(config_path)
+        protected_branches = load_protected_branches(config_path)
         
         # 获取 merge 源分支
         source_branch = get_merge_source_branch()
