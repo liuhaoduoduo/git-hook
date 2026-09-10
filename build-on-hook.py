@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
+
 """
 公共编译脚本：Git 钩子自动编译（Python 3 版本）
 
@@ -16,28 +16,17 @@
   build-config - 存储编译命令列表（每行一条）
 """
 
-import sys
 import subprocess
+import sys
 from pathlib import Path
 
-# 颜色定义
-RED = '\033[0;31m'
-GREEN = '\033[0;32m'
-YELLOW = '\033[1;33m'
-BLUE = '\033[0;34m'
-NC = '\033[0m'  # No Color
+from git_utils import (
+    log_error,
+    log_info,
+    log_success,
+    log_warning,
+)
 
-def log_info(msg):
-    print(f"{BLUE}ℹ️  {msg}{NC}")
-
-def log_success(msg):
-    print(f"{GREEN}✅ {msg}{NC}")
-
-def log_warning(msg):
-    print(f"{YELLOW}⚠️  {msg}{NC}")
-
-def log_error(msg):
-    print(f"{RED}❌ {msg}{NC}")
 
 def main():
     # 获取脚本所在目录（即 .git/hooks 目录）
@@ -71,7 +60,7 @@ def main():
             full_command = f'eval "$(goenv init -)" 2>/dev/null || true; {command}'
             log_info(f"[{command_index}] 执行命令: {command}")
             try:
-                result = subprocess.run(full_command, shell=True, check=True)
+                subprocess.run(full_command, shell=True, check=True)
                 log_success(f"[{command_index}] 命令执行成功")
             except subprocess.CalledProcessError as e:
                 log_error(f"[{command_index}] 命令执行失败 (退出码: {e.returncode})")

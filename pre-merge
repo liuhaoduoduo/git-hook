@@ -1,0 +1,111 @@
+#!/usr/bin/env python3
+"""
+Git pre-merge 钩子脚本（Python 3 版本）
+
+功能：
+  检查当前分支是否在受保护列表中
+  - 若是受保护分支，则判断 merge 的来源分支是否为远端同名分支（origin/<current-branch>）
+  - 允许：origin/<current-branch>
+  - 拒绝：其他任何来源分支
+  - 若不在受保护列表中，则允许 merge
+
+配置：
+  - 读取 .git/hooks/branch-protection.conf 中的分支列表
+  - 每行一个分支名，# 开头的行为注释
+"""
+
+import subprocess
+import sys
+from pathlib import Path
+
+from git_utils import (
+    GREEN,
+    NC,
+    RED,
+    YELLOW,
+    get_current_branch,
+    get_git_dir,
+    load_protected_branches,
+    validate_branch_operation,
+)
+
+
+def get_merge_source_branch(current_branch: str) -> str:
+    """获取 merge 的来源分支名"""
+    git_dir = get_git_dir()
+    if not git_dir:
+        return ""
+
+    merge_head = Path(git_dir) / "MERGE_HEAD"
+    if not merge_head.exists():
+        return ""
+
+    try:
+        merge_sha = merge_head.read_text(encoding="utf-8").strip()
+        if not merge_sha:
+            return ""
+    except OSError:
+        return ""
+
+    try:
+        result = subprocess.run(
+            [
+                "git",
+                "for-each-ref",
+                "--format=%(refname:short)",
+                "refs/remotes",
+                "refs/heads",
+                "--contains",
+                merge_sha,
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except subprocess.CalledProcessError:
+        return ""
+
+    candidates = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+    remote_match = f"origin/{current_branch}"
+    if remote_match in candidates:
+        return remote_match
+
+    if current_branch in candidates:
+        return current_branch
+
+    return ""
+
+
+def main() -> int:
+    current_branch = get_current_branch()
+    if not current_branch:
+        print(f"{YELLOW}⚠️ Unable to read current branch, skipping merge protection check.{NC}", file=sys.stderr)
+        return 0
+
+    git_dir = get_git_dir()
+    if not git_dir:
+        print(f"{RED}❌ Unable to resolve git directory.{NC}", file=sys.stderr)
+        return 1
+
+    # 加载保护分支配置
+    config_path = Path(git_dir) / "hooks" / "branch-protection.conf"
+    protected_branches = load_protected_branches(config_path)
+
+    # 如果当前分支不在保护列表，允许 merge
+    if not protected_branches or current_branch not in protected_branches:
+        return 0
+
+    # 获取 merge 来源分支
+    source_branch = get_merge_source_branch(current_branch)
+
+    # 验证 merge 操作是否被允许
+    if validate_branch_operation(current_branch, source_branch, "merge", config_path):
+        print(f"{GREEN}✅ Protected branch check passed: merge source is origin/{current_branch}{NC}")
+        return 0
+
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

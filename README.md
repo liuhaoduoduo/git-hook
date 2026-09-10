@@ -8,54 +8,53 @@
 
 | 维度 | 手动编译模式 | 自动编译系统 | 效益提升 |
 |-----|-----------|---------|--------|
-| **单次编译耗时** | 5-10 分钟（手动执行） | < 1 分钟（自动执行） | ⬇ 80-90% |
-| **编译失败发现周期** | 提交后/发布后（均值 6-12 小时） | 编码阶段（< 5 分钟） | ⬇ 99% |
-| **质量缺陷成本** | 发布后修复（人日成本 8-16） | 本地修复（人日成本 0.5） | ⬇ 94-97% |
-| **月度人力投入** | 10 人团队 × 6 小时/人 = 60 人时 | 10 人团队 × 0.5 小时/人 = 5 人时 | ⬇ 91.7% |
-| **代码合并冲突率** | 自动合并后发现问题 | 合并前预编译检查 | ⬇ 70% |
+| **编译失败发现周期** | 提交后/发布后（均值 5-10 分钟） | 编码阶段（< 5 分钟） | ⬇ 90% |
+| **编译失败影响范围** | 推送后/拉取后（均值 5-10 人） | 推送前（1 人） | ⬇ 90% |
 
 ### 关键业务收益
 
-1. **加快迭代速度**：每个开发者月均节省 6 小时编译及验证时间，10 人团队月度释放 60 人时生产力
-2. **降低缺陷成本**：在编码阶段捕获编译错误，避免进入测试/生产阶段（修复成本降低 15-30 倍）
-3. **保障代码质量**：pre-commit 和 pre-rebase 强制编译检查通过，实现零编译错误入库
-4. **提升团队规模效应**：自动化程度越高，团队扩张时边际成本越低；50 人团队可节省月度 300 人时
+1. **降低缺陷成本**：在编码阶段捕获编译错误，避免进入测试/生产阶段（修复成本降低 90%）
+2. **保障代码质量**：pre-commit 、 post-rebase 和 post-merge 强制编译检查通过，实现零编译错误入库
+3. **提升团队规模效应**：自动化程度越高，团队扩张时边际成本越低；50 人团队可节省月度 300 人
 
 ### 适用场景
 
 - ✅ **编译类项目**：Go、Java、C++ 等需要编译的工程项目
 - ✅ **多分支并行开发**：频繁切换分支与合并，自动拉取+编译降低遗漏风险
 - ✅ **大团队协作**：团队规模 5+ 人，标准化流程收益显著
-- ✅ **严格质量要求**：金融、医疗等行业，零容忍编译错误入库
+- ✅ **严格质量要求**：全行业通用，特别适用于零容忍编译错误入库的高要求团队
 
 ---
 
 ## 文件结构
 
 ```
-.git/hooks/
 ├── build-on-hook.py          # ✅ 公共编译脚本（Python 3，核心逻辑）
 ├── build-config              # ✅ 编译命令配置（可随时修改）
 ├── branch-protection.conf    # ✅ 分支保护配置（Push 禁推 + 删除保护）
-├── post-checkout             # ✅ 分支切换后：自动 git pull（编译由 post-merge 触发）
-├── post-merge                # ✅ 分支合并后：自动编译，手动 merge 成功后询问是否推送
-├── pre-commit                # ✅ Commit 前：必须通过编译才能提交
+├── post-checkout             # ✅ 分支切换后：自动 git pull 拉取远端最新变更
 ├── post-commit               # ✅ Commit 后：询问是否推送到远程
+├── post-merge                # ✅ Merge 后：自动编译，手动 merge 成功后询问是否推送
+├── post-rebase               # ✅ Rebase 后：自动编译，手动 rebase 成功后询问是否推送
+├—— post-rewrite              # ✅ Rewrite 后：自动编译，成功后询问是否推送
+├── pre-commit                # ✅ Commit 前：必须通过编译才能提交
 ├── pre-push                  # ✅ Push 前：校验分支推送和删除保护
-└── pre-rebase                # ✅ Rebase 前：必须通过编译才能 rebase
+├── pre-rebase                # ✅ Rebase 前：分支保护检查，被保护分支只允许从远端自身向本地自身 rebase
+├── pre-merge                 # ✅ Merge 前：分支保护检查，被保护分支只允许从远端自身向本地自身 merge
+└── git_utils.py              # ✅ 公共代码
 ```
 
 ## 自动编译触发场景
 
 | Git 操作 | 触发的 Hooks | 特点 |
 |---------|------------|------|
-| `git checkout <branch>` | post-checkout + post-merge | 自动拉取，如果产生合并则由 post-merge 编译 |
-| `git pull origin <branch>` | post-merge | 合并成功时编译（自动 pull 不询问 push） |
-| `git merge <branch>` | post-merge | 合并成功后编译，编译通过后询问是否 push；**合并保护分支时拒绝** |
+| `git checkout <branch>` | post-checkout + pre-merge(pre-rebase) + post-merge(post-rebase) | 自动拉取，如果产生合并则由 post-merge 或 post-rebase 编译 |
+| `git pull origin <branch>` | pre-merge(pre-rebase) + post-merge(post-rebase) | 合并成功时编译（自动 pull 不询问 push）；**保护分支也允许** |
+| `git merge <branch>` | pre-merge + post-merge | 若在保护分支上则**直接拒绝**；否则成功后询问是否 push |
 | `git commit` | pre-commit + post-commit | **编译失败则阻止 commit**；成功后询问是否推送 |
-| `git push` | pre-push | **命中禁推分支或保护分支则阻止操作**（手动和自动 push 均生效） |
+| `git push` | pre-push | **命中禁推分支则阻止操作**（手动和自动 push 均生效） |
 | `git push --delete <branch>` | pre-push | **受保护分支禁止删除** |
-| `git rebase` | pre-rebase | **编译失败则阻止 rebase**；**rebase 到保护分支时拒绝** |
+| `git rebase` | pre-rebase + post-rebase | 若在保护分支上则**直接拒绝**；否则成功后询问是否 push |
 
 ## 配置管理
 
@@ -96,11 +95,12 @@ code .git/hooks/branch-protection.conf
 
 ```properties
 # Git 分支保护配置文件
-# 列出的分支受到全面保护，包括：
+# 列出的分支受到保护，规则说明：
+#   - 禁止通过 git merge 命令从其他分支 merge 代码
+#   - 允许通过 git pull 命令更新代码（包括 git pull origin <branch> 和自动 pull）
 #   - 禁止推送（git push origin <branch>）
 #   - 禁止删除（git push origin --delete <branch>）
-#   - 禁止其他分支 merge（仅允许 git pull origin <branch> 自身更新）
-#   - 禁止其他分支 rebase（仅允许 git rebase origin/<branch> 自身更新）
+#   - 禁止 rebase 到此分支（git rebase <protected-branch>）
 
 main
 master
@@ -109,16 +109,25 @@ release
 hotfix
 ```
 
-**说明：**
+**保护规则详解：**
 - 纯分支列表格式，每行一个分支名（精确匹配）
 - `#` 开头的行为注释，空行被忽略
-- **全面保护**：列出的分支同时禁止推送、删除、merge 和 rebase
-  - `git push origin <branch>` — 直接拒绝
-  - `git push origin --delete <branch>` — 直接拒绝
-  - `git merge <protected-branch>`（从其他分支 merge）— 由 `pre-merge` 检查拒绝
-  - `git rebase <protected-branch>`（从其他分支 rebase）— 由 `pre-rebase` 检查拒绝
+- **merge 保护**（核心规则）：
+  - ❌ `git merge <other-branch>` — 直接拒绝（来自其他分支的 merge）
+  - ✅ `git pull origin <branch>` — 允许（远端同步，本质为 fetch + merge）
+  - ✅ `git checkout <branch>` （post-checkout 的自动 pull）— 允许
+- **push 和 delete 保护**：
+  - ❌ `git push origin <branch>` — 直接拒绝
+  - ❌ `git push origin --delete <branch>` — 直接拒绝
+- **rebase 保护**：
+  - ❌ `git rebase <protected-branch>` — 拒绝
 - 该校验对手动操作和 hook 自动触发的操作都生效
 - **默认保护策略**：配置为空（仅注释）时，保护所有分支
+
+**使用场景说明：**
+- 💡 使用 `git pull origin <branch>` 来更新保护分支的代码
+- 💡 其他分支的代码应该先合并到开发分支，再通过 pull 更新到保护分支
+- 💡 这样可以确保保护分支的代码质量，同时不影响正常的开发工作流
 
 ## 工作原理
 
@@ -128,9 +137,9 @@ hotfix
 git checkout feature
   ↓
 [1] post-checkout hook (Python 3)
-    ├─ 创建标记: .git/AUTO_PULL_IN_PROGRESS
-    ├─ 执行: git pull --no-rebase
-    └─ 清除标记（finally）
+    ├── 创建环境变量（当前仓库路径）
+    └── 执行: git pull --no-rebase
+    
   ↓
 [2] post-merge hook (Python 3)（如果 pull 触发了合并）
     └─ 调用: python3 build-on-hook.py "post-merge"
@@ -144,7 +153,7 @@ git checkout feature
 **工作流程说明：**
 - post-checkout 负责代码同步（git pull），不执行编译
 - post-merge 负责编译和推送询问
-- 通过 `.git/AUTO_PULL_IN_PROGRESS` 标记文件协作，区分自动 pull 和手动 merge
+- 通过环境变量标记文件协作，区分自动 pull 和手动 merge
 - 自动 pull 触发的编译成功后静默完成，手动 merge 后会询问是否推送
 
 ## 技术细节
@@ -155,14 +164,9 @@ git checkout feature
 - 支持 Python 3.6+
 
 ### 用户输入机制
-- `post-commit` 和 `post-merge` 从 `/dev/tty` 读取用户输入
+- `post-commit` 、 `post-merge` 和 `post-rebase` 从 `/dev/tty` 读取用户输入
 - Git hook 的 stdin 被重定向，无法使用标准 `input()`
 - **CI/非交互环境**：无法打开 `/dev/tty` 时自动跳过交互，不会阻塞
-
-### 标记文件机制
-- `.git/AUTO_PULL_IN_PROGRESS` - 标记自动 pull 触发的 merge
-- 由 post-checkout 创建，post-merge 读取并清理
-- finally 块确保异常时也能清理
 
 ## 故障排除
 
@@ -266,6 +270,10 @@ master
 
 ---
 
-**更新日期：** 2026-03-31  
+**更新日期：** 2026-09-10  
 **脚本语言：** Python 3  
-**已验证的 Hooks：** post-checkout、post-commit、post-merge、pre-commit、pre-push、pre-rebase
+
+## 版本更新历史
+
+### v1.2.0 - 1.整体重构，消除冗余代码。2.修改自动pull标记的实现方案
+### v1.2.0 - 优化分支保护规则（允许 git pull）

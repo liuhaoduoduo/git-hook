@@ -1,0 +1,72 @@
+#!/usr/bin/env python3
+
+"""
+Git post-rebase 钩子脚本（Python 3 版本）
+
+功能：
+  1. 在分支 rebase 完成后自动执行编译操作
+  2. 仅在手动 rebase 且编译全部成功后询问是否执行 git push
+
+触发场景：
+  - git rebase <branch>
+  - git pull --rebase origin <branch>（成功 rebase 后）
+  - git rebase --continue（完成 rebase 时）
+
+配置：
+  - 编译命令列表在 .git/hooks/build-config 文件中维护
+
+注意：
+  - 此脚本不会阻止 rebase 操作，即使编译失败也会完成 rebase
+"""
+
+import subprocess
+import sys
+from pathlib import Path
+
+from git_utils import (
+    clear_auto_pull_flag,
+    get_git_dir,
+    has_auto_pull_flag,
+    log_error,
+    log_warning,
+    prompt_push,
+)
+
+
+def main() -> int:
+    """主函数：执行编译脚本"""
+    git_dir = get_git_dir()
+    if not git_dir:
+        log_error("Error: Could not determine git directory")
+        return 1
+
+    build_script = Path(git_dir) / "hooks" / "build-on-hook.py"
+
+    if not build_script.exists():
+        log_warning(f"Warning: Build script not found at {build_script}")
+        return 0
+
+    try:
+        result = subprocess.run(
+            ["python3", str(build_script), "post-rebase"],
+            check=False
+        )
+        if result.returncode == 0:
+            # 检查是否由 post-checkout 自动拉取（git pull --rebase）触发
+            # 如果存在自动拉取标记，则不询问是否 push（因为 pull 已经包含 rebase）
+            if has_auto_pull_flag():
+                clear_auto_pull_flag()
+                log_warning("跳过 push 询问（由 post-checkout 自动拉取触发）")
+                return 0
+            else:
+                # 手动 rebase，编译成功后询问是否 push
+                return prompt_push()
+        else:
+            return 1
+    except Exception as e:
+        log_error(f"Error: Failed to execute build script: {e}")
+        return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

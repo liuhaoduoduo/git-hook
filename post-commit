@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
+
 """
 Git post-commit 钩子脚本（Python 3 版本）
 
@@ -14,41 +14,16 @@ Git post-commit 钩子脚本（Python 3 版本）
 import subprocess
 import sys
 
-# 颜色定义
-RED = '\033[0;31m'
-GREEN = '\033[0;32m'
-YELLOW = '\033[1;33m'
-BLUE = '\033[0;34m'
-NC = '\033[0m'  # No Color
-
-
-def get_current_branch() -> str:
-    """获取当前分支名称"""
-    try:
-        result = subprocess.run(
-            ['git', 'rev-parse', '--abbrev-ref', 'HEAD'],
-            capture_output=True,
-            text=True,
-            timeout=5
-        )
-        if result.returncode == 0:
-            return result.stdout.strip()
-    except (subprocess.TimeoutExpired, Exception):
-        pass
-    return ""
-
-
-def has_remote_branch(branch: str) -> bool:
-    """检查远程追踪分支是否存在"""
-    try:
-        result = subprocess.run(
-            ['git', 'rev-parse', '--verify', f'origin/{branch}'],
-            capture_output=True,
-            timeout=5
-        )
-        return result.returncode == 0
-    except (subprocess.TimeoutExpired, Exception):
-        return False
+from git_utils import (
+    BLUE,
+    GREEN,
+    NC,
+    RED,
+    TIMEOUT_DEFAULT,
+    YELLOW,
+    check_remote_tracking_branch,
+    get_current_branch,
+)
 
 
 def read_user_input(prompt: str) -> str:
@@ -70,7 +45,7 @@ def main() -> int:
 
     print(f"{BLUE}ℹ️  当前分支: {current_branch}{NC}")
 
-    if not has_remote_branch(current_branch):
+    if not check_remote_tracking_branch(current_branch):
         print(f"{YELLOW}⚠️  分支 '{current_branch}' 没有对应的远程追踪分支，跳过推送提示{NC}")
         return 0
 
@@ -81,7 +56,7 @@ def main() -> int:
         try:
             result = subprocess.run(
                 ['git', 'push', 'origin', current_branch],
-                timeout=60
+                timeout=TIMEOUT_DEFAULT
             )
             if result.returncode == 0:
                 print(f"{GREEN}✅ 推送成功{NC}")

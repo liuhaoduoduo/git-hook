@@ -1,0 +1,61 @@
+#!/usr/bin/env python3
+
+"""
+Git post-rewrite 钩子脚本（Python 3 版本）
+
+功能：
+  1. 在执行 cherry-pick 和 revert 操作后自动执行编译操作
+  2. 编译全部成功后询问是否执行 git push
+
+触发场景：
+  - git revert <commit>（成功时）
+  - git commit --amend（成功时）
+
+参数：
+  $1: 重写的操作类型
+      - "amend": 来自 git commit --amend、git revert
+
+配置：
+  - 编译命令列表在 .git/hooks/build-config 文件中维护
+
+注意：
+  - 此脚本不会阻止 commit --amend 或 revert 操作
+"""
+
+import subprocess
+import sys
+from pathlib import Path
+
+from git_utils import get_git_dir, prompt_push
+
+
+def main() -> int:
+    """主函数：执行编译脚本"""
+
+    git_dir = get_git_dir()
+    if not git_dir:
+        print("Error: Could not determine git directory", file=sys.stderr)
+        return 1
+
+    build_script = Path(git_dir) / "hooks" / "build-on-hook.py"
+
+    if not build_script.exists():
+        print(f"Warning: Build script not found at {build_script}", file=sys.stderr)
+        return 0
+
+    try:
+        result = subprocess.run(
+            ["python3", str(build_script), "post-rewrite"],
+            check=False
+        )
+        if result.returncode == 0:
+            return prompt_push()
+        else:
+            return 1
+    except Exception as e:
+        print(f"Error: Failed to execute build script: {e}", file=sys.stderr)
+        return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
