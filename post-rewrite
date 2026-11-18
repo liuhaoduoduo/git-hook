@@ -26,7 +26,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from git_utils import get_git_dir, prompt_push
+from git_utils import get_git_dir, get_hooks_dir, prompt_push
 
 
 def main() -> int:
@@ -37,7 +37,7 @@ def main() -> int:
         print("Error: Could not determine git directory", file=sys.stderr)
         return 1
 
-    build_script = Path(git_dir) / "hooks" / "build-on-hook.py"
+    build_script = get_hooks_dir() / "build-on-hook.py"
 
     if not build_script.exists():
         print(f"Warning: Build script not found at {build_script}", file=sys.stderr)

@@ -129,6 +129,17 @@ def get_git_dir() -> str:
         return ""
 
 
+def get_hooks_dir() -> Path:
+    """
+    返回 hook 脚本及其依赖文件所在的目录。
+
+    基于本模块（git_utils.py）自身位置定位，因此无论文件部署在
+    .git/hooks 还是仓库内被跟踪的 .githooks 目录，都能正确找到
+    同目录下的 build-on-hook.py、build-config、branch-protection.conf。
+    """
+    return Path(__file__).resolve().parent
+
+
 def get_current_branch() -> str:
     """返回当前检出的分支名称。"""
     try:
@@ -290,11 +301,7 @@ def validate_branch_operation(current_branch: str, target_ref: str, operation_ty
       True 允许，False 禁止（已输出错误消息）
     """
     if not config_path:
-        git_dir = get_git_dir()
-        if not git_dir:
-            print(f"{RED}❌ 无法获取 Git 目录{NC}", file=sys.stderr)
-            return False
-        config_path = Path(git_dir) / "hooks" / "branch-protection.conf"
+        config_path = get_hooks_dir() / "branch-protection.conf"
 
     protected_branches = load_protected_branches(config_path)
 
@@ -317,13 +324,7 @@ def run_build_script(operation_type: str, git_dir: str | None = None) -> int:
       0 成功或脚本不存在
       非0 执行失败的退出码
     """
-    if not git_dir:
-        git_dir = get_git_dir()
-        if not git_dir:
-            print(f"{RED}❌ 无法获取 Git 目录{NC}", file=sys.stderr)
-            return 1
-
-    build_script = Path(git_dir) / "hooks" / "build-on-hook.py"
+    build_script = get_hooks_dir() / "build-on-hook.py"
     if not build_script.exists():
         return 0
 

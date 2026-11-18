@@ -29,6 +29,7 @@
 ## 文件结构
 
 ```
+├── install-hooks.sh          # ✅ 交互式安装脚本（一键部署到目标项目，支持两种模式）
 ├── build-on-hook.py          # ✅ 公共编译脚本（Python 3，核心逻辑）
 ├── build-config              # ✅ 编译命令配置（可随时修改）
 ├── branch-protection.conf    # ✅ 分支保护配置（Push 禁推 + 删除保护）
@@ -43,6 +44,53 @@
 ├── pre-merge                 # ✅ Merge 前：分支保护检查，被保护分支只允许从远端自身向本地自身 merge
 └── git_utils.py              # ✅ 公共代码
 ```
+
+## 安装脚本使用说明
+
+项目提供交互式安装脚本 `install-hooks.sh`，可将本目录下的全部 hook 及依赖文件一键部署到任意目标 Git 项目，并由使用者选择是否将 hook 纳入版本控制。
+
+### 运行方式
+
+```bash
+# 方式一：直接用 bash 执行
+bash install-hooks.sh
+
+# 方式二：赋予可执行权限后直接运行（脚本已默认带可执行位）
+./install-hooks.sh
+```
+
+### 交互流程
+
+脚本依次进行以下三步交互：
+
+1. **输入目标项目目录**：回车则使用当前目录；支持相对路径，脚本会自动转为绝对路径，并校验该目录是否为 Git 仓库。
+2. **询问是否将 hook 脚本纳入版本控制 `[y/N]`**：根据选择进入两种部署模式。
+3. **覆盖确认 `[y/N]`**：仅当目标目录已存在同名文件时出现，选择 `n` 则跳过已存在文件，选择 `y` 则覆盖更新。
+
+### 两种部署模式对比
+
+| 对比项 | 选择 `n`（不纳入版本控制） | 选择 `y`（纳入版本控制） |
+|-------|--------------------------|------------------------|
+| 安装位置 | 目标项目的 `.git/hooks/` | 目标项目根目录的 `.githooks/` |
+| 自动配置 | 无 | 自动执行 `git config core.hooksPath .githooks` |
+| 是否随仓库共享 | 否，仅在本机生效 | 是，`git add .githooks` 提交后团队成员克隆即共享 |
+| 规则变更方式 | 各自手动维护 | 走代码评审，随版本演进 |
+| 适用场景 | 个人本地校验、临时接入 | 团队统一门禁、需要可追溯的规范管理 |
+
+### 安装内容
+
+脚本会安装 9 个 hook 脚本及 4 个依赖文件，共 13 个文件：
+
+- **Hook 脚本**：`pre-commit`、`pre-push`、`pre-merge`、`pre-rebase`、`post-commit`、`post-merge`、`post-rebase`、`post-rewrite`、`post-checkout`
+- **依赖文件**：`git_utils.py`、`build-on-hook.py`、`build-config`、`branch-protection.conf`
+
+### 注意事项
+
+- 脚本通过 `git rev-parse --git-path hooks` 定位 Git 的 hooks 目录，兼容普通仓库与 `git worktree`。
+- 脚本内部基于文件自身位置定位依赖，因此无论部署在 `.git/hooks` 还是 `.githooks`，均能正确找到同目录的配置与编译脚本。
+- 配置 `core.hooksPath` 后，Git 会**忽略默认的 `.git/hooks` 目录**，如需恢复默认：`git config --unset core.hooksPath`。
+- 客户端 hook 仍可被 `git commit --no-verify` / `git push --no-verify` 跳过，强制门禁需在 CI 或服务端 `pre-receive` 中复跑同一套检查。
+- 运行脚本前请确认系统已安装 `bash`、`git`、`python3`。
 
 ## 自动编译触发场景
 

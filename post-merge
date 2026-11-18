@@ -25,6 +25,7 @@ from pathlib import Path
 from git_utils import (
     clear_auto_pull_flag,
     get_git_dir,
+    get_hooks_dir,
     has_auto_pull_flag,
     log_error,
     log_warning,
@@ -39,7 +40,7 @@ def main() -> int:
         log_error("Error: Could not determine git directory")
         return 1
 
-    build_script = Path(git_dir) / "hooks" / "build-on-hook.py"
+    build_script = get_hooks_dir() / "build-on-hook.py"
 
     if not build_script.exists():
         log_warning(f"Warning: Build script not found at {build_script}")

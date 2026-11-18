@@ -19,6 +19,7 @@ from typing import Set
 
 from git_utils import (
     get_git_dir,
+    get_hooks_dir,
     load_protected_branches,
     log_error,
     log_info,
@@ -114,7 +115,7 @@ def main() -> int:
         return 1
 
     # 分支保护检查，被列为保护的分支不能推送，不能删除
-    config_file = Path(git_dir) / "hooks" / "branch-protection.conf"
+    config_file = get_hooks_dir() / "branch-protection.conf"
     protected_branches = load_protected_branches(config_file)
 
     # 解析推送操作

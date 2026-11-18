@@ -25,6 +25,7 @@ from git_utils import (
     YELLOW,
     get_current_branch,
     get_git_dir,
+    get_hooks_dir,
     load_protected_branches,
     validate_branch_operation,
 )
@@ -89,7 +90,7 @@ def main() -> int:
         return 1
 
     # 加载保护分支配置
-    config_path = Path(git_dir) / "hooks" / "branch-protection.conf"
+    config_path = get_hooks_dir() / "branch-protection.conf"
     protected_branches = load_protected_branches(config_path)
 
     # 如果当前分支不在保护列表，允许 merge
