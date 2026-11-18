@@ -30,6 +30,7 @@
 
 ```
 ├── install-hooks.sh          # ✅ 交互式安装脚本（一键部署到目标项目，支持两种模式）
+├── activate-hooks.sh         # ✅ 克隆后激活脚本（随 .githooks 入库，新成员执行一次使钩子生效）
 ├── build-on-hook.py          # ✅ 公共编译脚本（Python 3，核心逻辑）
 ├── build-config              # ✅ 编译命令配置（可随时修改）
 ├── branch-protection.conf    # ✅ 分支保护配置（Push 禁推 + 删除保护）
@@ -83,6 +84,25 @@ bash install-hooks.sh
 
 - **Hook 脚本**：`pre-commit`、`pre-push`、`pre-merge`、`pre-rebase`、`post-commit`、`post-merge`、`post-rebase`、`post-rewrite`、`post-checkout`
 - **依赖文件**：`git_utils.py`、`build-on-hook.py`、`build-config`、`branch-protection.conf`
+- **入库模式额外文件**：`activate-hooks.sh`（克隆后激活脚本），因此入库模式实际安装 14 个文件；不入库模式不安装该脚本。
+
+### 克隆后激活（新成员必读）
+
+**为什么需要激活**：`.githooks` 目录虽然随仓库分发，但 `core.hooksPath` 配置保存在每个克隆本地的 `.git/config` 中，**不会随仓库一起克隆**。因此新成员克隆仓库后，虽然拿到了 `.githooks` 里的全部脚本，Git 却仍默认从 `.git/hooks` 查找钩子，钩子不会自动生效。
+
+**激活方式**：克隆仓库后，在仓库根目录执行一次即可：
+
+```bash
+bash .githooks/activate-hooks.sh
+```
+
+该脚本会自动完成：
+
+1. 配置 `git config core.hooksPath .githooks`；
+2. 检查并补全 hook 脚本的可执行权限；
+3. 输出当前配置结果。
+
+脚本**幂等**，可重复执行；已激活时会直接提示，不会重复改写配置。
 
 ### 注意事项
 

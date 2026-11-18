@@ -50,11 +50,18 @@ SUPPORT_FILES=(
   branch-protection.conf
 )
 
-ALL_FILES=("${HOOK_FILES[@]}" "${SUPPORT_FILES[@]}")
+# 克隆后激活脚本（仅入库模式需要，随 .githooks 一起分发）
+BOOTSTRAP_FILES=(
+  activate-hooks.sh
+)
+
+# 基础文件（两种模式都安装）
+BASE_FILES=("${HOOK_FILES[@]}" "${SUPPORT_FILES[@]}")
+ALL_FILES=("${BASE_FILES[@]}")
 EXECUTABLE_FILES=("${HOOK_FILES[@]}" build-on-hook.py)
 
-# 校验源文件齐全
-for f in "${ALL_FILES[@]}"; do
+# 校验源文件齐全（含激活脚本）
+for f in "${BASE_FILES[@]}" "${BOOTSTRAP_FILES[@]}"; do
   if [[ ! -f "$SCRIPT_DIR/$f" ]]; then
     error "源文件缺失：$SCRIPT_DIR/$f"
     exit 1
@@ -90,6 +97,9 @@ esac
 if $versioned; then
   # 入库模式：目标项目根目录下的 .githooks
   dest_dir="$target/.githooks"
+  # 额外携带激活脚本，供其他克隆者执行一次使钩子生效
+  ALL_FILES+=("${BOOTSTRAP_FILES[@]}")
+  EXECUTABLE_FILES+=("${BOOTSTRAP_FILES[@]}")
 else
   # 不入库模式：Git 实际的 hooks 目录（兼容 worktree，返回值可能是相对路径）
   hooks_rel="$(git -C "$target" rev-parse --git-path hooks)"
@@ -152,6 +162,7 @@ if $versioned; then
   ok "安装完成：文件已复制到 $dest_dir"
   info "已执行 git config core.hooksPath .githooks"
   info ".githooks 受版本控制，可执行 git add .githooks 提交后随仓库共享"
+  info "其他成员克隆后需执行一次：bash .githooks/activate-hooks.sh"
 else
   ok "安装完成：文件已复制到 $dest_dir"
   warn "该目录不受版本控制，仅在本机生效"
